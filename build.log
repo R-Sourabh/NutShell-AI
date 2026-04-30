@@ -1,0 +1,12 @@
+
+> nexustask-ai@0.1.0 build /home/sourabhraghuwanshi/Documents/NexusTash AI
+> next build
+
+   ▲ Next.js 15.5.14
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 10.3s
+   Linting and checking validity of types ...
+Next.js build worker exited with code: 1 and signal: null
+ ELIFECYCLE  Command failed with exit code 1.
