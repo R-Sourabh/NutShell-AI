@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 
@@ -42,6 +43,7 @@ import {
   type DatabaseTaskRow,
   type TaskItem,
 } from "@/lib/mock-data";
+import type { Database } from "@/types/database";
 
 const motionProps = {
   initial: { opacity: 0, y: 20 },
@@ -62,9 +64,12 @@ const priorityTone = {
 } as const satisfies Record<TaskItem["priority"], "warm" | "accent" | "neutral">;
 
 type SurfaceMode = "research" | "tasks";
+type UserProfile = Database["public"]["Tables"]["profiles"]["Row"];
 
 type DashboardAppShellProps = {
   userEmail: string;
+  userProfile?: UserProfile | null;
+  isProfileIncomplete?: boolean;
   tasks?: TaskItem[];
   hasLiveTasks?: boolean;
 };
@@ -76,6 +81,7 @@ const cleanSummary = (text: string) => {
 export function DashboardAppShell({
 
   userEmail,
+  isProfileIncomplete = false,
   tasks = taskItems,
   hasLiveTasks = false,
 }: DashboardAppShellProps) {
@@ -261,37 +267,75 @@ export function DashboardAppShell({
     }
   }
 
+  const systemStatusPanel = (
+    <div className="panel-soft space-y-4 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow">System status</p>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {isResearching
+              ? `Agent is currently synthesizing context for "${researchQuery}"...`
+              : "Research agent idle. Select a task or enter a prompt to trigger a workspace update."}
+          </p>
+        </div>
+        <ThemeToggle />
+      </div>
+
+      <form action="/auth/signout" method="post">
+        <Button
+          type="submit"
+          className="w-full justify-between"
+          variant="outline"
+        >
+          Sign out
+          <ArrowUpRight className="size-4" />
+        </Button>
+      </form>
+    </div>
+  );
+
   return (
     <main className="min-h-screen px-4 py-4 text-foreground md:px-6 md:py-6">
       <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1600px] flex-col gap-4 lg:min-h-[calc(100vh-3rem)] lg:flex-row">
         <motion.aside
           {...motionProps}
-          className="panel-surface flex w-full flex-col justify-between overflow-hidden p-4 md:p-5 lg:max-w-[280px]"
+          className="panel-surface flex w-full flex-col justify-between overflow-hidden p-4 md:p-5 lg:max-w-[320px]"
         >
           <div className="space-y-6">
             <div className="space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="eyebrow">Workspace</p>
-                  <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-                    NutShell AI
-                  </h1>
-                  <p className="mt-2 text-sm text-muted-foreground">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <Image
+                    src="/assets/Light.png"
+                    alt="NutShell AI"
+                    width={1387}
+                    height={768}
+                    className="h-auto w-full max-w-[220px] object-contain dark:hidden"
+                    priority
+                  />
+                  <Image
+                    src="/assets/Dark.png"
+                    alt="NutShell AI"
+                    width={1385}
+                    height={768}
+                    className="hidden h-auto w-full max-w-[220px] object-contain dark:block"
+                    priority
+                  />
+                  <p className="mt-3 truncate text-sm text-muted-foreground">
                     {userEmail}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <ThemeToggle />
-                  <div className="rounded-2xl border border-primary/15 bg-primary/10 p-2 text-primary">
-                    <Sparkles className="size-5" />
-                  </div>
+                <div className="rounded-2xl border border-primary/15 bg-primary/10 p-2 text-primary mt-8">
+                  <Sparkles className="size-5" />
                 </div>
               </div>
 
               <div className="panel-soft space-y-3 p-4">
                 <p className="eyebrow">Today&apos;s pulse</p>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  {storeTasks.length > 0
+                  {isProfileIncomplete
+                    ? "Your profile is ready for a quick refresh. Add your name and avatar from account settings when available."
+                    : storeTasks.length > 0
                     ? `You have ${storeTasks.length} total tasks. ${storeTasks.filter((t) => t.priority === "high").length
                     } are high priority and ready for research.`
                     : "Your workspace is ready. Use the command bar to create your first research-aware task."}
@@ -339,27 +383,7 @@ export function DashboardAppShell({
             </nav>
           </div>
 
-          <div className="panel-soft space-y-4 p-4">
-            <div>
-              <p className="eyebrow">System status</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                {isResearching
-                  ? `Agent is currently synthesizing context for "${researchQuery}"...`
-                  : "Research agent idle. Select a task or enter a prompt to trigger a workspace update."}
-              </p>
-            </div>
-
-            <form action="/auth/signout" method="post">
-              <Button
-                type="submit"
-                className="w-full justify-between"
-                variant="outline"
-              >
-                Sign out
-                <ArrowUpRight className="size-4" />
-              </Button>
-            </form>
-          </div>
+          <div className="hidden lg:block">{systemStatusPanel}</div>
         </motion.aside>
 
         <section className="flex min-w-0 flex-1 flex-col gap-4">
@@ -867,6 +891,7 @@ export function DashboardAppShell({
             </motion.div>
           )}
         </section>
+        <div className="lg:hidden">{systemStatusPanel}</div>
       </div>
     </main>
   );

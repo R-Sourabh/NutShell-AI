@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, LockKeyhole, Mail, Pencil, Sparkles, User, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -111,11 +112,15 @@ export function AuthPanel() {
         <section className="panel-surface flex flex-col justify-between p-6 md:p-8">
           <div className="space-y-8">
             <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="eyebrow">NutShell AI</p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-tight md:text-4xl">
-                  Your research-driven productivity workspace
-                </h1>
+              <div className="min-w-0">
+                <Image
+                  src="/assets/Light.png"
+                  alt="NutShell AI"
+                  width={1387}
+                  height={768}
+                  className="h-auto w-full max-w-[300px] object-contain md:max-w-[440px]"
+                  priority
+                />
               </div>
 
               <div className="rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary">
