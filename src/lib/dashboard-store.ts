@@ -5,8 +5,6 @@ import { create } from "zustand";
 import type { ResearchCard } from "@/lib/ai/research-cards";
 import type { TaskItem } from "@/lib/mock-data";
 
-export type DashboardView = "today" | "research" | "projects" | "delegated";
-
 export type ResearchSource = {
   title: string;
   url: string;
@@ -15,7 +13,6 @@ export type ResearchSource = {
 
 type DashboardStore = {
   tasks: TaskItem[];
-  activeView: DashboardView;
   selectedTaskId: string | null;
   researchQuery: string;
   researchSummary: string;
@@ -25,7 +22,7 @@ type DashboardStore = {
   isResearching: boolean;
   hydrateTasks: (tasks: TaskItem[]) => void;
   upsertTask: (task: TaskItem) => void;
-  setActiveView: (view: DashboardView) => void;
+  removeTask: (taskId: string) => void;
   setSelectedTaskId: (taskId: string) => void;
   setResearchQuery: (query: string) => void;
   startResearch: () => void;
@@ -38,7 +35,6 @@ type DashboardStore = {
 
 export const useDashboardStore = create<DashboardStore>((set) => ({
   tasks: [],
-  activeView: "research",
   selectedTaskId: null,
   researchQuery: "",
   researchSummary: "",
@@ -66,7 +62,16 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
         selectedTaskId: task.id,
       };
     }),
-  setActiveView: (activeView) => set({ activeView }),
+  removeTask: (taskId) =>
+    set((state) => {
+      const nextTasks = state.tasks.filter((item) => item.id !== taskId);
+      const nextSelectedId =
+        state.selectedTaskId === taskId ? nextTasks[0]?.id ?? null : state.selectedTaskId;
+      return {
+        tasks: nextTasks,
+        selectedTaskId: nextSelectedId,
+      };
+    }),
   setSelectedTaskId: (selectedTaskId) => set({ selectedTaskId }),
   setResearchQuery: (researchQuery) => set({ researchQuery }),
   startResearch: () =>

@@ -1,4 +1,4 @@
-import { generateText, Output } from "ai";
+import { generateObject } from "ai";
 import { createGroq } from "@ai-sdk/groq";
 
 import { researchCardSchema } from "@/lib/ai/research-cards";
@@ -34,12 +34,24 @@ export async function POST(request: Request) {
       apiKey: groqApiKey,
     });
 
-    const result = await generateText({
-      model: groq("moonshotai/kimi-k2-instruct-0905"),
-      output: Output.object({
-        schema: researchCardSchema,
-      }),
+    const result = await generateObject({
+      model: groq("llama-3.1-8b-instant"),
+      output: "no-schema",
       system: `You create compact UI card payloads for NutShell AI.
+Return a JSON object containing a 'cards' array matching this structure:
+{
+  "cards": [
+    {
+      "id": string,
+      "type": "summary" | "takeaways" | "checklist" | "risks" | "sources",
+      "title": string,
+      "eyebrow": string,
+      "tone": "accent" | "neutral" | "success" | "warm",
+      "body": string,
+      "items": string[]
+    }
+  ]
+}
 Return 3 to 5 cards that are useful for a productivity dashboard sidebar.
 Keep each item short, practical, and easy to scan.
 Do not repeat the same sentence across cards.
@@ -70,7 +82,8 @@ Important:
 - If the research quality is weak, make the summary/risk cards say so clearly.`,
     });
 
-    return Response.json(result.output);
+    const validated = researchCardSchema.parse(result.object);
+    return Response.json(validated);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unexpected card generation error.";

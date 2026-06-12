@@ -104,7 +104,7 @@ export async function POST(request: Request) {
       .join("\n\n");
 
     const result = streamText({
-      model: groq("llama-3.3-70b-versatile"),
+      model: groq("llama-3.1-8b-instant"),
       system: `You are the research agent for NutShell AI.
 Summarize web research into a crisp action-oriented brief.
 Keep the tone professional and practical.

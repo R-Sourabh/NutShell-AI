@@ -2,24 +2,30 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { motion } from "framer-motion";
+import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 
 import {
   ArrowUpRight,
-  Blocks,
-  Command,
+  Calendar,
   CornerDownLeft,
-  FolderKanban,
-  Hourglass,
   LayoutPanelTop,
   ListFilter,
   LoaderCircle,
   Search,
   Sparkles,
+  Trash2,
+  Pencil,
+  X,
+  User,
 } from "lucide-react";
 
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { AlertDialog } from "@/components/ui/alert-dialog";
+import { DatePickerPopover } from "@/components/dashboard/date-picker-popover";
+import { PriorityPickerPopover } from "@/components/dashboard/priority-picker-popover";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
 import { ResearchCardStack } from "@/components/dashboard/research-card-stack";
 import type { ResearchCard } from "@/lib/ai/research-cards";
@@ -27,13 +33,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
-  type DashboardView,
   type ResearchSource,
   useDashboardStore,
 } from "@/lib/dashboard-store";
 import { cn } from "@/lib/utils";
 import {
-  commandSuggestions,
   contextCards,
   insightMetrics,
   mapDatabaseTaskToTaskItem,
@@ -42,6 +46,7 @@ import {
   timelineSteps,
   type DatabaseTaskRow,
   type TaskItem,
+  type TaskPriority,
 } from "@/lib/mock-data";
 import type { Database } from "@/types/database";
 
@@ -57,36 +62,35 @@ const statusTone = {
   planned: "neutral",
 } as const satisfies Record<TaskItem["status"], "accent" | "success" | "neutral">;
 
-const priorityTone = {
-  high: "warm",
-  medium: "accent",
-  low: "neutral",
-} as const satisfies Record<TaskItem["priority"], "warm" | "accent" | "neutral">;
-
 type SurfaceMode = "research" | "tasks";
 type UserProfile = Database["public"]["Tables"]["profiles"]["Row"];
 
 type DashboardAppShellProps = {
-  userEmail: string;
   userProfile?: UserProfile | null;
   isProfileIncomplete?: boolean;
   tasks?: TaskItem[];
-  hasLiveTasks?: boolean;
 };
 
 const cleanSummary = (text: string) => {
   return text.replace(/^Summary[:\s]*/i, "").trim();
 };
 
-export function DashboardAppShell({
+const AVATAR_OPTIONS = [
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Felix",
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Aneka",
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Jasper",
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Molly",
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Toby",
+  "https://api.dicebear.com/7.x/notionists/svg?seed=Felix&flip=true",
+];
 
-  userEmail,
+export function DashboardAppShell({
+  userProfile = null,
   isProfileIncomplete = false,
   tasks = taskItems,
-  hasLiveTasks = false,
 }: DashboardAppShellProps) {
+  const router = useRouter();
   const storeTasks = useDashboardStore((state) => state.tasks);
-  const activeView = useDashboardStore((state) => state.activeView);
   const selectedTaskId = useDashboardStore((state) => state.selectedTaskId);
   const researchQuery = useDashboardStore((state) => state.researchQuery);
   const researchSummary = useDashboardStore((state) => state.researchSummary);
@@ -95,7 +99,6 @@ export function DashboardAppShell({
   const researchError = useDashboardStore((state) => state.researchError);
   const isResearching = useDashboardStore((state) => state.isResearching);
   const hydrateTasks = useDashboardStore((state) => state.hydrateTasks);
-  const setActiveView = useDashboardStore((state) => state.setActiveView);
   const setSelectedTaskId = useDashboardStore((state) => state.setSelectedTaskId);
   const setResearchQuery = useDashboardStore((state) => state.setResearchQuery);
   const startResearch = useDashboardStore((state) => state.startResearch);
@@ -107,38 +110,241 @@ export function DashboardAppShell({
   const setGeneratedCards = useDashboardStore((state) => state.setGeneratedCards);
   const finishResearch = useDashboardStore((state) => state.finishResearch);
   const setResearchError = useDashboardStore((state) => state.setResearchError);
+  const removeTask = useDashboardStore((state) => state.removeTask);
 
   const [inputValue, setInputValue] = useState("");
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("research");
+  const [deleteDialogTaskId, setDeleteDialogTaskId] = useState<string | null>(null);
+  const [activePickerTaskId, setActivePickerTaskId] = useState<string | null>(null);
+  const [activePriorityPickerTaskId, setActivePriorityPickerTaskId] = useState<string | null>(null);
+
+  // Profile management states
+  const [localProfile, setLocalProfile] = useState<UserProfile | null>(userProfile);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileFirstName, setProfileFirstName] = useState(userProfile?.first_name || "");
+  const [profileLastName, setProfileLastName] = useState(userProfile?.last_name || "");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState(userProfile?.avatar_url || AVATAR_OPTIONS[0]);
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Sync state if prop changes
+  useEffect(() => {
+    setLocalProfile(userProfile);
+    if (userProfile) {
+      setProfileFirstName(userProfile.first_name || "");
+      setProfileLastName(userProfile.last_name || "");
+      setProfileAvatarUrl(userProfile.avatar_url || AVATAR_OPTIONS[0]);
+    }
+  }, [userProfile]);
+
+  async function handleSaveDueDate(taskId: string, date: Date) {
+    try {
+      if (taskId === "empty-state") {
+        const matchingTask = storeTasks.find(t => t.id === taskId);
+        if (matchingTask) {
+          const updated = {
+            ...matchingTask,
+            due_at: date.toISOString(),
+            dueLabel: new Intl.DateTimeFormat("en-IN", {
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            }).format(date),
+          };
+          upsertTask(updated);
+        }
+        setActivePickerTaskId(null);
+        return;
+      }
+
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          due_at: date.toISOString(),
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        setResearchError(payload?.error ?? "Failed to save due date.");
+        return;
+      }
+
+      const updatedTaskPayload = (await response.json()) as DatabaseTaskRow;
+      upsertTask(mapDatabaseTaskToTaskItem(updatedTaskPayload));
+      setActivePickerTaskId(null);
+    } catch (error) {
+      setResearchError(
+        error instanceof Error ? error.message : "Failed to save due date.",
+      );
+    }
+  }
+
+  async function handleSavePriority(taskId: string, priority: TaskPriority) {
+    try {
+      if (taskId === "empty-state") {
+        const matchingTask = storeTasks.find(t => t.id === taskId);
+        if (matchingTask) {
+          const updated = {
+            ...matchingTask,
+            priority,
+          };
+          upsertTask(updated);
+        }
+        setActivePriorityPickerTaskId(null);
+        return;
+      }
+
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          priority,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        setResearchError(payload?.error ?? "Failed to save priority.");
+        return;
+      }
+
+      const updatedTaskPayload = (await response.json()) as DatabaseTaskRow;
+      upsertTask(mapDatabaseTaskToTaskItem(updatedTaskPayload));
+      setActivePriorityPickerTaskId(null);
+    } catch (error) {
+      setResearchError(
+        error instanceof Error ? error.message : "Failed to save priority.",
+      );
+    }
+  }
+
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setIsSavingProfile(true);
+    try {
+      const supabase = createBrowserSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setResearchError("You must be logged in to update your profile.");
+        setIsSavingProfile(false);
+        return;
+      }
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          first_name: profileFirstName,
+          last_name: profileLastName,
+          avatar_url: profileAvatarUrl,
+          full_name: `${profileFirstName} ${profileLastName}`.trim(),
+        })
+        .eq("id", user.id);
+
+      if (error) {
+        setResearchError(error.message);
+        setIsSavingProfile(false);
+        return;
+      }
+
+      setLocalProfile({
+        id: user.id,
+        email: user.email || "",
+        first_name: profileFirstName,
+        last_name: profileLastName,
+        full_name: `${profileFirstName} ${profileLastName}`.trim(),
+        avatar_url: profileAvatarUrl,
+        created_at: localProfile?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      setIsProfileModalOpen(false);
+      router.refresh();
+    } catch (err) {
+      setResearchError(err instanceof Error ? err.message : "Failed to update profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
 
   useEffect(() => {
     hydrateTasks(tasks);
   }, [hydrateTasks, tasks]);
 
-  const visibleTasks = getVisibleTasks(storeTasks, activeView);
+  const visibleTasks = [...storeTasks].sort((a, b) => {
+    const priorityWeight = { high: 3, medium: 2, low: 1 };
+    return priorityWeight[b.priority] - priorityWeight[a.priority];
+  });
   const activeTask =
     visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0];
-  const visibleContextCards = activeTask
+  const hasSearchStarted = isResearching || researchQuery.trim().length > 0;
+  const visibleContextCards = (activeTask && hasSearchStarted)
     ? getContextCardsForTask(activeTask)
     : contextCards;
-  const navItems = getNavItems(storeTasks);
+  const hasSearchResults =
+    researchSummary.trim().length > 0 || researchSources.length > 0;
 
-  useEffect(() => {
-    if (activeTask?.title) {
-      setInputValue(activeTask.title);
-      if (!researchQuery) {
-        setResearchQuery(activeTask.title);
-      }
+  async function handleDeleteTask(
+    taskId: string,
+    event: React.MouseEvent,
+  ) {
+    event.stopPropagation();
+    setDeleteDialogTaskId(taskId);
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteDialogTaskId) {
+      return;
     }
-  }, [activeTask?.title, researchQuery, setResearchQuery]);
+
+    try {
+      const response = await fetch(`/api/tasks/${deleteDialogTaskId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        setResearchError(payload?.error ?? "Failed to delete task.");
+        return;
+      }
+
+      removeTask(deleteDialogTaskId);
+      setDeleteDialogTaskId(null);
+    } catch (error) {
+      setResearchError(
+        error instanceof Error ? error.message : "Failed to delete task.",
+      );
+    }
+  }
+
+  function handleCloseDeleteDialog() {
+    setDeleteDialogTaskId(null);
+  }
+
+  const deleteConfirmationDialog = (
+    <AlertDialog
+      open={Boolean(deleteDialogTaskId)}
+      title="Confirm deletion"
+      description="This will permanently remove the task and its context from your workspace."
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      onClose={handleCloseDeleteDialog}
+      onConfirm={handleConfirmDelete}
+    />
+  );
 
   async function handleResearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const query = inputValue.trim() || activeTask?.title;
+    const query = inputValue.trim();
 
     if (!query) {
-      setResearchError("Pick a task or enter a research prompt first.");
+      setResearchError("Enter a topic or research prompt first.");
       return;
     }
 
@@ -294,12 +500,241 @@ export function DashboardAppShell({
     </div>
   );
 
+  const workflowStatusPanel = (
+    <div className="panel-soft space-y-4 p-4">
+      <div>
+        <p className="eyebrow">Workflow status</p>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          This timeline shows how tasks transition into research-backed briefs.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {timelineSteps.map((step, index) => {
+          const Icon = step.icon;
+
+          return (
+            <div key={step.label} className="flex gap-3">
+              <div className="flex flex-col items-center">
+                <div className="flex size-10 items-center justify-center rounded-2xl border border-border/70 bg-card">
+                  <Icon className="size-4 text-muted-foreground" />
+                </div>
+                {index < timelineSteps.length - 1 ? (
+                  <div className="mt-2 h-full w-px bg-border/80" />
+                ) : null}
+              </div>
+              <div className="pt-1">
+                <p className="text-sm font-medium">{step.label}</p>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  {step.detail}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const profileEditModal = (
+    <AnimatePresence>
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/40 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsProfileModalOpen(false)}
+            className="absolute inset-0"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="panel-surface relative z-10 w-full max-w-md overflow-hidden p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="eyebrow">User Settings</p>
+                <h3 className="mt-2 text-xl font-semibold tracking-tight">
+                  Update Profile
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(false)}
+                className="rounded-full p-2 hover:bg-muted"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form className="mt-6 space-y-5" onSubmit={handleSaveProfile}>
+              <div className="flex flex-col items-center justify-center space-y-3 pb-2">
+                <div className="relative">
+                  <div className="size-24 overflow-hidden rounded-full border-2 border-primary/20 bg-background/50 ring-4 ring-primary/5">
+                    <img
+                      src={profileAvatarUrl}
+                      alt="Avatar Preview"
+                      className="size-full object-cover"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAvatarModalOpen(true)}
+                    className="absolute -bottom-1 -right-1 rounded-full border border-border bg-background p-2 text-primary shadow-sm transition-transform hover:scale-110 active:scale-95"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                </div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-accent">
+                  Profile Avatar
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label className="block space-y-2">
+                  <span className="text-sm font-semibold">First Name</span>
+                  <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <User className="size-4 text-muted-foreground" />
+                    <input
+                      required
+                      type="text"
+                      value={profileFirstName}
+                      onChange={(e) => setProfileFirstName(e.target.value)}
+                      className="w-full bg-transparent text-sm outline-none"
+                      placeholder="Enter first name"
+                    />
+                  </div>
+                </label>
+
+                <label className="block space-y-2">
+                  <span className="text-sm font-semibold">Last Name</span>
+                  <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-background/70 px-4 py-3">
+                    <User className="size-4 text-muted-foreground" />
+                    <input
+                      required
+                      type="text"
+                      value={profileLastName}
+                      onChange={(e) => setProfileLastName(e.target.value)}
+                      className="w-full bg-transparent text-sm outline-none"
+                      placeholder="Enter last name"
+                    />
+                  </div>
+                </label>
+              </div>
+
+              <div className="mt-8 flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsProfileModalOpen(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/95 disabled:opacity-50"
+                >
+                  {isSavingProfile ? "Saving..." : "Save details"}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+
+  const avatarSelectModal = (
+    <AnimatePresence>
+      {isAvatarModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/40 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsAvatarModalOpen(false)}
+            className="absolute inset-0"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            className="panel-surface relative z-10 w-full max-w-md overflow-hidden p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="eyebrow">Avatars</p>
+                <h3 className="mt-2 text-xl font-semibold tracking-tight">
+                  Choose your avatar
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAvatarModalOpen(false)}
+                className="rounded-full p-2 hover:bg-muted"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <div className="mt-8 grid grid-cols-3 gap-4">
+              {AVATAR_OPTIONS.map((url) => (
+                <button
+                  key={url}
+                  type="button"
+                  onClick={() => {
+                    setProfileAvatarUrl(url);
+                    setIsAvatarModalOpen(false);
+                  }}
+                  className={`relative aspect-square overflow-hidden rounded-2xl border-2 transition-all hover:scale-105 active:scale-95 ${
+                    profileAvatarUrl === url
+                      ? "border-primary bg-primary/5"
+                      : "border-border/50 bg-muted/30"
+                  }`}
+                >
+                  <img
+                    src={url}
+                    alt="Avatar Option"
+                    className="size-full object-cover"
+                  />
+                  {profileAvatarUrl === url && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-primary/10">
+                      <div className="rounded-full bg-primary p-1 text-primary-foreground shadow-sm">
+                        <Sparkles className="size-3" />
+                      </div>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-8 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsAvatarModalOpen(false)}
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/95"
+              >
+                Done
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+
   return (
     <main className="min-h-screen px-4 py-4 text-foreground md:px-6 md:py-6">
+      {deleteConfirmationDialog}
+      {profileEditModal}
+      {avatarSelectModal}
       <div className="mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1600px] flex-col gap-4 lg:min-h-[calc(100vh-3rem)] lg:flex-row">
         <motion.aside
           {...motionProps}
-          className="panel-surface flex w-full flex-col justify-between overflow-hidden p-4 md:p-5 lg:max-w-[320px]"
+          className="panel-surface flex w-full flex-col justify-between overflow-x-hidden overflow-y-auto p-4 md:p-5 lg:max-w-[320px]"
         >
           <div className="space-y-6">
             <div className="space-y-4">
@@ -321,9 +756,46 @@ export function DashboardAppShell({
                     className="hidden h-auto w-full max-w-[220px] object-contain dark:block"
                     priority
                   />
-                  <p className="mt-3 truncate text-sm text-muted-foreground">
-                    {userEmail}
-                  </p>
+                  {localProfile?.first_name && localProfile?.last_name ? (
+                    <div className="mt-3 flex items-center gap-3">
+                      <div className="size-10 overflow-hidden rounded-full border border-border bg-background/50">
+                        <img
+                          src={localProfile?.avatar_url || "https://api.dicebear.com/7.x/notionists/svg?seed=Felix"}
+                          alt="Avatar"
+                          className="size-full object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-mono text-sm font-semibold tracking-tight text-foreground">
+                          {localProfile.first_name} {localProfile.last_name}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setIsProfileModalOpen(true)}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          Edit profile
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsProfileModalOpen(true)}
+                        className="flex items-center gap-2 rounded-xl border-2 border-dashed border-border px-3 py-1.5 hover:bg-secondary/40 transition-all"
+                      >
+                        <div className="size-6 overflow-hidden rounded-full border border-border bg-background/50">
+                          <img
+                            src="https://api.dicebear.com/7.x/notionists/svg?seed=Felix"
+                            alt="Avatar"
+                            className="size-full object-cover"
+                          />
+                        </div>
+                        <span className="text-xs font-semibold text-accent">Complete Profile</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-2xl border border-primary/15 bg-primary/10 p-2 text-primary mt-8">
                   <Sparkles className="size-5" />
@@ -336,51 +808,17 @@ export function DashboardAppShell({
                   {isProfileIncomplete
                     ? "Your profile is ready for a quick refresh. Add your name and avatar from account settings when available."
                     : storeTasks.length > 0
-                    ? `You have ${storeTasks.length} total tasks. ${storeTasks.filter((t) => t.priority === "high").length
-                    } are high priority and ready for research.`
-                    : "Your workspace is ready. Use the command bar to create your first research-aware task."}
+                      ? `You have ${storeTasks.length} total tasks. ${storeTasks.filter((t) => t.priority === "high").length
+                      } are high priority and ready for research.`
+                      : "Your workspace is ready. Use the command bar to create your first research-aware task."}
                 </p>
               </div>
 
             </div>
 
-            <nav className="space-y-2">
-              {navItems.map(({ label, count, icon: Icon, value }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setActiveView(value)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition-colors",
-                    activeView === value
-                      ? "border-primary/15 bg-primary/10 text-foreground"
-                      : "border-transparent bg-transparent hover:border-border/70 hover:bg-background/80",
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <span className="rounded-xl border border-border/60 bg-background/80 p-2">
-                      <Icon className="size-4 text-muted-foreground" />
-                    </span>
-                    <span>
-                      <span className="block text-sm font-medium">{label}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {label === "Today"
-                          ? "Focus for the day"
-                          : label === "Research Queue"
-                            ? "Active context search"
-                            : label === "Projects"
-                              ? "Long-term planning"
-                              : "Assigned tasks"}
-                      </span>
 
-                    </span>
-                  </span>
-                  <span className="rounded-full bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
-                    {count}
-                  </span>
-                </button>
-              ))}
-            </nav>
+
+            <div className="hidden lg:block">{workflowStatusPanel}</div>
           </div>
 
           <div className="hidden lg:block">{systemStatusPanel}</div>
@@ -497,9 +935,7 @@ export function DashboardAppShell({
                         <Badge variant="accent" className="w-fit">
                           {isResearching
                             ? "Streaming research"
-                            : hasLiveTasks
-                              ? "Supabase connected"
-                              : "Ready to research"}
+                            : "Ready to research"}
                         </Badge>
                       </div>
 
@@ -520,14 +956,10 @@ export function DashboardAppShell({
                           <Separator />
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
-                              <Badge variant="neutral">Tavily search</Badge>
-                              <Badge variant="accent">Groq stream</Badge>
-                              <Badge variant="neutral">AI SDK</Badge>
+                              <Badge variant="accent">Bitcoin and its origins</Badge>
+                              <Badge variant="neutral">What is Quantum Computing</Badge>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="rounded-full border border-border/70 px-2 py-1 font-mono text-xs text-muted-foreground">
-                                <Command className="mr-1 inline size-3" />K
-                              </span>
                               <Button type="submit" disabled={isResearching}>
                                 {isResearching ? (
                                   <>
@@ -545,22 +977,6 @@ export function DashboardAppShell({
                           </div>
                         </div>
                       </form>
-
-                      <div className="flex flex-wrap gap-2">
-                        {commandSuggestions.map((suggestion) => (
-                          <button
-                            key={suggestion}
-                            type="button"
-                            onClick={() => {
-                              setInputValue(suggestion);
-                              setResearchQuery(suggestion);
-                            }}
-                            className="wobbly sm border-2 border-border/70 bg-background/70 px-3 py-2 text-left text-xs font-bold text-muted-foreground transition-all hover:border-accent hover:text-foreground hover:-rotate-1"
-                          >
-                            {suggestion}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -575,7 +991,7 @@ export function DashboardAppShell({
                   <div>
                     <p className="eyebrow">Research Context</p>
                     <h3 className="mt-2 text-2xl font-semibold tracking-tight">
-                      {researchQuery || activeTask?.title || "Current query context"}
+                      {researchQuery || "No active research"}
                     </h3>
                   </div>
                   <Badge variant={isResearching ? "accent" : "neutral"}>
@@ -585,14 +1001,82 @@ export function DashboardAppShell({
 
                 <div className="mt-5 wobbly border-2 border-border/70 bg-background/80 p-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    {activeTask ? (
+                    {activeTask && hasSearchStarted ? (
                       <>
                         <Badge variant={statusTone[activeTask.status]}>
                           {activeTask.status}
                         </Badge>
-                        <Badge variant={priorityTone[activeTask.priority]}>
-                          {activeTask.priority} priority
-                        </Badge>
+                        <div className="relative">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            className={cn(
+                              "flex items-center gap-1 rounded-full text-xs font-semibold uppercase tracking-wider",
+                              activeTask.priority === "high"
+                                ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                                : activeTask.priority === "medium"
+                                  ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20"
+                                  : "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              e.preventDefault();
+                              setActivePriorityPickerTaskId(`research-${activeTask.id}`);
+                            }}
+                          >
+                            {activeTask.priority} priority
+                          </Button>
+                          {activePriorityPickerTaskId === `research-${activeTask.id}` && (
+                            <PriorityPickerPopover
+                              currentPriority={activeTask.priority}
+                              onSave={(priority) => handleSavePriority(activeTask.id, priority)}
+                              onClose={() => setActivePriorityPickerTaskId(null)}
+                            />
+                          )}
+                        </div>
+                        
+                        <div className="relative">
+                          {(!activeTask.due_at || activeTask.dueLabel === "No due date" || activeTask.dueLabel === "Ready when you are") ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              className="flex items-center gap-1 rounded-full text-xs font-semibold"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setActivePickerTaskId(activeTask.id);
+                              }}
+                            >
+                              <Calendar className="size-3.5 text-accent" />
+                              Add due date
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="xs"
+                              className="flex items-center gap-1 rounded-full text-xs font-semibold text-muted-foreground"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                setActivePickerTaskId(activeTask.id);
+                              }}
+                            >
+                              <Calendar className="size-3.5 text-accent" />
+                              {activeTask.dueLabel}
+                            </Button>
+                          )}
+
+                          {activePickerTaskId === activeTask.id && (
+                            <DatePickerPopover
+                              currentDate={activeTask.due_at}
+                              onSave={(date) => handleSaveDueDate(activeTask.id, date)}
+                              onClose={() => setActivePickerTaskId(null)}
+                            />
+                          )}
+                        </div>
                       </>
                     ) : null}
                   </div>
@@ -668,7 +1152,7 @@ export function DashboardAppShell({
                 <div className="mt-5">
                   {generatedCards.length > 0 ? (
                     <ResearchCardStack cards={generatedCards} />
-                  ) : (
+                  ) : !hasSearchStarted ? (
                     <div className="grid gap-3 lg:grid-cols-2">
                       {visibleContextCards.map((card) => {
                         const tone = card.tone;
@@ -689,90 +1173,60 @@ export function DashboardAppShell({
                         );
                       })}
                     </div>
+                  ) : (
+                    <div className="rounded-[24px] border border-border/70 bg-background/80 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="eyebrow">Insight cards</p>
+                        <Badge variant={isResearching ? "accent" : "neutral"}>
+                          {isResearching ? "Generating" : "Not available"}
+                        </Badge>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                        {isResearching
+                          ? "Cards will appear here as soon as the research stream finishes."
+                          : hasSearchResults
+                            ? "Your summary and sources are ready. Insight cards will show up here once generated for this search."
+                            : "Run a search to generate insight cards for the current query."}
+                      </p>
+                    </div>
                   )}
                 </div>
 
-                <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-                  <div className="rounded-[24px] border border-border/70 bg-background/80 p-4">
-                    <div>
-                      <p className="eyebrow">Source preview</p>
-                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                        {isResearching
-                          ? `Currently gathering fresh sources for "${researchQuery}"...`
-                          : "Tavily search results are surfaced here as fast context anchors."}
-                      </p>
-
-                    </div>
-
-                    {researchSources.length > 0 ? (
-                      <div className="mt-4 space-y-3">
-                        {researchSources.map((source) => (
-                          <a
-                            key={source.url}
-                            href={source.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block rounded-[20px] border border-border/70 bg-card/80 p-4 transition-colors hover:border-primary/20 hover:bg-primary/5"
-                          >
-                            <p className="text-sm font-medium">{source.title}</p>
-                            <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">
-                              {source.snippet}
-                            </p>
-                            <p className="mt-3 truncate text-xs text-primary">
-                              {source.url}
-                            </p>
-                          </a>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="mt-4 text-sm leading-6 text-muted-foreground">
-                        No sources yet. Run a research query to populate this
-                        area.
-                      </p>
-                    )}
+                <div className="mt-5 rounded-[24px] border border-border/70 bg-background/80 p-4">
+                  <div>
+                    <p className="eyebrow">Source preview</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {isResearching
+                        ? `Currently gathering fresh sources for "${researchQuery}"...`
+                        : "Tavily search results are surfaced here as fast context anchors."}
+                    </p>
                   </div>
 
-                  <div className="rounded-[24px] border border-border/70 bg-background/80 p-4">
-                    <div>
-                      <p className="eyebrow">Workflow status</p>
-                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                        {isResearching
-                          ? "The agent is currently moving through these workspace phases."
-                          : "This timeline shows how tasks transition into research-backed briefs."}
-                      </p>
-                    </div>
-
-
+                  {researchSources.length > 0 ? (
                     <div className="mt-4 space-y-3">
-                      {timelineSteps.map((step, index) => {
-                        const Icon = step.icon;
-
-                        return (
-                          <div key={step.label} className="flex gap-3">
-                            <div className="flex flex-col items-center">
-                              <div className="flex size-10 items-center justify-center rounded-2xl border border-border/70 bg-card">
-                                <Icon className="size-4 text-muted-foreground" />
-                              </div>
-                              {index < timelineSteps.length - 1 ? (
-                                <div className="mt-2 h-full w-px bg-border/80" />
-                              ) : null}
-                            </div>
-                            <div className="pt-1">
-                              <p className="text-sm font-medium">{step.label}</p>
-                              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                                {isResearching && index === 0
-                                  ? `Synthesizing intent for "${researchQuery}"...`
-                                  : isResearching && index === 1
-                                    ? "Consulting news and policy sources..."
-                                    : step.detail}
-                              </p>
-
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {researchSources.map((source) => (
+                        <a
+                          key={source.url}
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block rounded-[20px] border border-border/70 bg-card/80 p-4 transition-colors hover:border-primary/20 hover:bg-primary/5"
+                        >
+                          <p className="text-sm font-medium">{source.title}</p>
+                          <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">
+                            {source.snippet}
+                          </p>
+                          <p className="mt-3 truncate text-xs text-primary">
+                            {source.url}
+                          </p>
+                        </a>
+                      ))}
                     </div>
-                  </div>
+                  ) : (
+                    <p className="mt-4 text-sm leading-6 text-muted-foreground">
+                      No sources yet. Run a research query to populate this area.
+                    </p>
+                  )}
                 </div>
               </motion.div>
             </>
@@ -799,7 +1253,7 @@ export function DashboardAppShell({
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <Badge variant="neutral">
                   <ListFilter className="mr-1 size-3" />
-                  {getViewLabel(activeView)}
+                  All Tasks
                 </Badge>
                 <Badge variant="accent">
                   {visibleTasks.length} visible task{visibleTasks.length === 1 ? "" : "s"}
@@ -813,7 +1267,6 @@ export function DashboardAppShell({
                     type="button"
                     onClick={() => {
                       setSelectedTaskId(task.id);
-                      setInputValue(task.title);
                     }}
                     className={cn(
                       "w-full rounded-[24px] border p-4 text-left transition-colors md:p-5",
@@ -829,17 +1282,91 @@ export function DashboardAppShell({
                             <Badge variant={statusTone[task.status]}>
                               {task.status}
                             </Badge>
-                            <Badge variant={priorityTone[task.priority]}>
-                              {task.priority} priority
-                            </Badge>
+                            <div className="relative">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                className={cn(
+                                  "flex items-center gap-1 rounded-full text-xs font-semibold uppercase tracking-wider",
+                                  task.priority === "high"
+                                    ? "bg-red-500/10 border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+                                    : task.priority === "medium"
+                                      ? "bg-yellow-500/10 border-yellow-500/30 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20"
+                                      : "bg-blue-500/10 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20"
+                                )}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setActivePriorityPickerTaskId(task.id);
+                                }}
+                              >
+                                {task.priority} priority
+                              </Button>
+                              {activePriorityPickerTaskId === task.id && (
+                                <PriorityPickerPopover
+                                  currentPriority={task.priority}
+                                  onSave={(priority) => handleSavePriority(task.id, priority)}
+                                  onClose={() => setActivePriorityPickerTaskId(null)}
+                                />
+                              )}
+                            </div>
                           </div>
                           <h4 className="mt-3 text-lg font-semibold tracking-tight">
                             {task.title}
                           </h4>
                         </div>
 
-                        <div className="rounded-full border border-border/70 px-3 py-1 text-xs text-muted-foreground">
-                          {task.dueLabel}
+                        <div className="flex items-center gap-2">
+                          <div className="relative">
+                            {(!task.due_at || task.dueLabel === "No due date" || task.dueLabel === "Ready when you are") ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                className="flex items-center gap-1 rounded-full text-xs font-semibold"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setActivePickerTaskId(task.id);
+                                }}
+                              >
+                                <Calendar className="size-3.5 text-accent" />
+                                Add due date
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="xs"
+                                className="flex items-center gap-1 rounded-full text-xs font-semibold text-muted-foreground"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setActivePickerTaskId(task.id);
+                                }}
+                              >
+                                <Calendar className="size-3.5 text-accent" />
+                                {task.dueLabel}
+                              </Button>
+                            )}
+
+                            {activePickerTaskId === task.id && (
+                              <DatePickerPopover
+                                currentDate={task.due_at}
+                                onSave={(date) => handleSaveDueDate(task.id, date)}
+                                onClose={() => setActivePickerTaskId(null)}
+                              />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteTask(task.id, e)}
+                            className="rounded-full border border-destructive/30 bg-destructive/10 p-1.5 text-destructive hover:bg-destructive/20 transition-colors"
+                            title="Delete task"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
                         </div>
                       </div>
 
@@ -865,25 +1392,7 @@ export function DashboardAppShell({
                       </div>
 
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        {task.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="rounded-full bg-secondary px-2.5 py-1 text-xs text-secondary-foreground"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {task.researchNeeded ? (
-                          <span className="rounded-full border border-primary/15 bg-primary/10 px-2.5 py-1 text-xs text-primary">
-                            Research trigger ready
-                          </span>
-                        ) : (
-                          <span className="rounded-full border border-border/70 bg-background px-2.5 py-1 text-xs text-muted-foreground">
-                            Manual planning task
-                          </span>
-                        )}
-                      </div>
+
                     </div>
                   </button>
                 ))}
@@ -891,106 +1400,40 @@ export function DashboardAppShell({
             </motion.div>
           )}
         </section>
-        <div className="lg:hidden">{systemStatusPanel}</div>
+        <div className="lg:hidden space-y-4">
+          {workflowStatusPanel}
+          {systemStatusPanel}
+        </div>
       </div>
     </main>
   );
 }
 
-function getVisibleTasks(tasks: TaskItem[], view: DashboardView) {
-  switch (view) {
-    case "today":
-      return tasks;
-    case "research":
-      return tasks.filter((task) => task.researchNeeded);
-    case "projects":
-      return tasks.filter(
-        (task) =>
-          task.tags.includes("Planning") ||
-          task.tags.includes("Team ops") ||
-          task.tags.includes("Supabase"),
-      );
-    case "delegated":
-      return tasks.filter((task) => task.status === "ready");
-    default:
-      return tasks;
-  }
-}
-
-function getNavItems(tasks: TaskItem[]) {
-  return [
-    {
-      label: "Today",
-      value: "today" as const,
-      count: tasks.length,
-      icon: Hourglass,
-    },
-    {
-      label: "Research Queue",
-      value: "research" as const,
-      count: tasks.filter((task) => task.researchNeeded).length,
-      icon: Search,
-    },
-    {
-      label: "Projects",
-      value: "projects" as const,
-      count: tasks.filter(
-        (task) =>
-          task.tags.includes("Planning") ||
-          task.tags.includes("Team ops") ||
-          task.tags.includes("Supabase"),
-      ).length,
-      icon: FolderKanban,
-    },
-    {
-      label: "Delegated",
-      value: "delegated" as const,
-      count: tasks.filter((task) => task.status === "ready").length,
-      icon: Blocks,
-    },
-  ];
-}
-
-function getViewLabel(view: DashboardView) {
-  switch (view) {
-    case "today":
-      return "Today";
-    case "research":
-      return "Research Queue";
-    case "projects":
-      return "Projects";
-    case "delegated":
-      return "Delegated";
-    default:
-      return "Today";
-  }
-}
 
 function getContextCardsForTask(task: TaskItem) {
   return contextCards.map((card) => {
     if (card.id === "card-news") {
       return {
         ...card,
-        description: task.researchNeeded
-          ? `This panel will surface fresh sources and summaries for "${task.title}".`
-          : `This task is currently manual-first, so the news panel is standing by until research is requested.`,
-        metadata: task.researchNeeded
-          ? "Source links will stream here"
-          : "Research not requested yet",
+        description:
+          "Fresh signals will appear here after a search, including source links, short summaries, and recent context that supports the brief.",
+        metadata: "Source links will stream here",
       };
     }
 
     if (card.id === "card-checklist") {
       return {
         ...card,
-        description: `Generated subtasks will expand the current ${task.priority}-priority item into a clear step-by-step checklist.`,
-        metadata: `${task.tags.length} working tag${task.tags.length === 1 ? "" : "s"}`,
+        description:
+          "Generated subtasks will turn the research result into a clear checklist of follow-up actions, decisions, and next steps.",
+        metadata: "Checklist is ready",
       };
     }
 
     return {
       ...card,
-      description: `The context brief for "${task.title}" will summarize the key takeaways, implications, and next moves for this queue item.`,
+      description:
+        "The executive brief will summarize the key takeaways, implications, risks, and recommended next moves from the completed search.",
       metadata: task.dueLabel,
     };
   });

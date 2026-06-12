@@ -7,9 +7,9 @@ import { ArrowRight, LockKeyhole, Mail, Pencil, Sparkles, User, X } from "lucide
 import { AnimatePresence, motion } from "framer-motion";
 
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 
 type AuthMode = "sign-in" | "sign-up";
 
@@ -118,13 +118,24 @@ export function AuthPanel() {
                   alt="NutShell AI"
                   width={1387}
                   height={768}
-                  className="h-auto w-full max-w-[300px] object-contain md:max-w-[440px]"
+                  className="h-auto w-full max-w-[300px] object-contain md:max-w-[440px] dark:hidden"
+                  priority
+                />
+                <Image
+                  src="/assets/Dark.png"
+                  alt="NutShell AI"
+                  width={1385}
+                  height={768}
+                  className="hidden h-auto w-full max-w-[300px] object-contain md:max-w-[440px] dark:block"
                   priority
                 />
               </div>
 
-              <div className="rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary">
-                <Sparkles className="size-5" />
+              <div className="flex items-center gap-3">
+                <div className="rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary">
+                  <Sparkles className="size-5" />
+                </div>
+                <ThemeToggle />
               </div>
             </div>
 
@@ -162,12 +173,10 @@ export function AuthPanel() {
         <section className="panel-surface p-6 md:p-8">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="eyebrow">Authentication</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">
                 {mode === "sign-in" ? "Welcome back" : "Create your account"}
               </h2>
             </div>
-            <Badge variant="accent">Supabase SSR</Badge>
           </div>
 
           <div className="mt-6 flex gap-2 rounded-full border border-border/70 bg-background/70 p-1">
@@ -175,8 +184,8 @@ export function AuthPanel() {
               type="button"
               onClick={() => setMode("sign-in")}
               className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition-colors ${mode === "sign-in"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground"
                 }`}
             >
               Sign in
@@ -185,8 +194,8 @@ export function AuthPanel() {
               type="button"
               onClick={() => setMode("sign-up")}
               className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition-colors ${mode === "sign-up"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground"
                 }`}
             >
               Sign up
@@ -369,8 +378,8 @@ export function AuthPanel() {
                       setIsAvatarModalOpen(false);
                     }}
                     className={`relative aspect-square overflow-hidden rounded-2xl border-2 transition-all hover:scale-105 active:scale-95 ${avatarUrl === url
-                        ? "border-primary bg-primary/5"
-                        : "border-border/50 bg-muted/30"
+                      ? "border-primary bg-primary/5"
+                      : "border-border/50 bg-muted/30"
                       }`}
                   >
                     <img

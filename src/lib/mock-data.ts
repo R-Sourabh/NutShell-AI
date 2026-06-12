@@ -19,10 +19,10 @@ export type TaskItem = {
   title: string;
   summary: string;
   dueLabel: string;
+  due_at?: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   researchNeeded: boolean;
-  tags: string[];
 };
 
 export type DatabaseTaskRow = {
@@ -68,7 +68,6 @@ export const taskItems: TaskItem[] = [
     status: "researching",
     priority: "high",
     researchNeeded: true,
-    tags: ["Policy", "India", "Research agent"],
   },
   {
     id: "task-hiring-market",
@@ -79,7 +78,6 @@ export const taskItems: TaskItem[] = [
     status: "ready",
     priority: "medium",
     researchNeeded: true,
-    tags: ["Hiring", "Market scan"],
   },
   {
     id: "task-sprint-kickoff",
@@ -90,7 +88,6 @@ export const taskItems: TaskItem[] = [
     status: "planned",
     priority: "low",
     researchNeeded: false,
-    tags: ["Planning", "Team ops"],
   },
 ];
 
@@ -104,7 +101,6 @@ export const EMPTY_TASK_STATE: TaskItem[] = [
     status: "planned",
     priority: "medium",
     researchNeeded: false,
-    tags: ["Empty state", "Supabase ready"],
   },
 ];
 
@@ -156,12 +152,6 @@ export const contextCards: ContextCard[] = [
   },
 ];
 
-export const commandSuggestions = [
-  "Learn about the new SEBI regulations for 2026 startups",
-  "Research AI-native onboarding patterns for enterprise products",
-  "Track the latest funding climate for vertical SaaS in India",
-];
-
 export const timelineSteps = [
   {
     label: "Intent detected",
@@ -190,18 +180,16 @@ export function mapDatabaseTaskToTaskItem(task: DatabaseTaskRow): TaskItem {
       "This task is connected to the database and ready for richer AI context later.",
     dueLabel: task.due_at
       ? new Intl.DateTimeFormat("en-IN", {
-          day: "numeric",
-          month: "short",
-          hour: "numeric",
-          minute: "2-digit",
-        }).format(new Date(task.due_at))
+        day: "numeric",
+        month: "short",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(task.due_at))
       : "No due date",
+    due_at: task.due_at,
     status: task.status,
     priority: task.priority,
     researchNeeded: task.requires_research,
-    tags: task.requires_research
-      ? ["Supabase", "Research ready"]
-      : ["Supabase", "Manual task"],
   };
 }
 

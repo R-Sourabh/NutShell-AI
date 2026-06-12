@@ -49,12 +49,9 @@ export default async function Home() {
 
   return (
     <DashboardAppShell
-      userEmail={user.email ?? "Signed-in user"}
       userProfile={profile}
       isProfileIncomplete={isProfileIncomplete}
       tasks={taskList.length > 0 ? taskList : fallbackTasks}
-      hasLiveTasks={!error && Boolean(tasks?.length)}
     />
-
   );
 }
