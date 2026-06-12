@@ -1269,13 +1269,13 @@ export function DashboardAppShell({
                       setSelectedTaskId(task.id);
                     }}
                     className={cn(
-                      "w-full rounded-[24px] border p-4 text-left transition-colors md:p-5",
+                      "w-full h-full rounded-[24px] border p-4 text-left transition-colors md:p-5 flex flex-col justify-start items-stretch",
                       task.id === activeTask?.id
                         ? "border-primary/20 bg-primary/8 shadow-[0_16px_34px_-28px_rgba(17,70,109,0.55)]"
                         : "border-border/70 bg-background/80 hover:border-primary/15 hover:bg-primary/5",
                     )}
                   >
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-4 w-full">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
