@@ -132,8 +132,3 @@ Make sure the initial SQL migrations in `supabase/migrations/` have been run on 
    ```
 
 ---
-
-## Optimization & Code Hygiene
-- **Zero Console Logs:** Verified that debugging statements have been completely cleaned up.
-- **Minimized Bundle Bloat:** Pruned unused components, route paths, icons, and type attributes.
-- **ESLint & TypeScript Compliant:** The application compiles with zero build-blocking warnings or type errors.
